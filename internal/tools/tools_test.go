@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -356,7 +357,7 @@ func TestDownloadedFileIsSavedPrivatelyAndItsPathReturned(t *testing.T) {
 	if filepath.Dir(out.Saved) != filepath.Join(tools.DownloadsIn(e.home), "main") {
 		t.Errorf("saved to %s", out.Saved)
 	}
-	if info, _ := os.Stat(filepath.Dir(out.Saved)); info.Mode().Perm() != 0o700 {
+	if info, _ := os.Stat(filepath.Dir(out.Saved)); runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Errorf("folder mode %v", info.Mode().Perm())
 	}
 	e.ok("download_attachment", map[string]any{"url": "/files/report.pdf"}, &out)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -65,6 +66,9 @@ func TestRelativeHomeIsRefused(t *testing.T) {
 
 func TestTheRealBinarySpeaksMCPOverStdio(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "yougile-mcp")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}

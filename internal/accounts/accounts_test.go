@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -41,10 +42,11 @@ func TestAddSavesAKeyPerChosenCompanyUnderAliasesAndNeverThePassword(t *testing.
 	if strings.Contains(string(raw), "hunter2") || strings.Contains(out.String(), "issued-key") || strings.Contains(out.String(), "hunter2") {
 		t.Error("a secret leaked")
 	}
-	if info, _ := os.Stat(store.Path); info.Mode().Perm() != 0o600 {
+	// Windows has no Unix modes.
+	if info, _ := os.Stat(store.Path); runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Errorf("file mode %v", info.Mode().Perm())
 	}
-	if info, _ := os.Stat(filepath.Dir(store.Path)); info.Mode().Perm() != 0o700 {
+	if info, _ := os.Stat(filepath.Dir(store.Path)); runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Errorf("folder mode %v", info.Mode().Perm())
 	}
 }
