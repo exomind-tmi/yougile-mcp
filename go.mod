@@ -3,7 +3,7 @@ module github.com/exomind-tmi/yougile-mcp
 go 1.27.0
 
 require (
-	github.com/exomind-tmi/mcp-plugin-kit v0.0.0-20261027124937-cc1d9d2941c9
+	github.com/exomind-tmi/mcp-plugin-kit v0.1.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/term v0.47.0
 )

@@ -1,5 +1,5 @@
-github.com/exomind-tmi/mcp-plugin-kit v0.0.0-20261027124937-cc1d9d2941c9 h1:QkWTWqnUEKoOrsMKbvc1PZzp21aIEqA3/wMBton1uSw=
-github.com/exomind-tmi/mcp-plugin-kit v0.0.0-20261027124937-cc1d9d2941c9/go.mod h1:oLfcgdnnX9dRE167ZFCJ5oHP9WPPecdCjtUAhZA2yQU=
+github.com/exomind-tmi/mcp-plugin-kit v0.1.0 h1:R1Hs5gN43Nv3aFKW6JEiWiBEvEnCmyyG6JWcurd6qqo=
+github.com/exomind-tmi/mcp-plugin-kit v0.1.0/go.mod h1:oLfcgdnnX9dRE167ZFCJ5oHP9WPPecdCjtUAhZA2yQU=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
 github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=

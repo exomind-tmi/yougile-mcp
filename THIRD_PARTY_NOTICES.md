@@ -9,7 +9,7 @@ license texts as `yougile-mcp_<version>_licenses.zip`.
 | Component | Version | License |
 |---|---|---|
 | [Go standard library and runtime](https://go.dev/LICENSE) | toolchain | BSD-3-Clause |
-| [github.com/exomind-tmi/mcp-plugin-kit/home](https://pkg.go.dev/github.com/exomind-tmi/mcp-plugin-kit@v0.0.0-20261027124937-cc1d9d2941c9?tab=licenses) | v0.0.0-20261027124937-cc1d9d2941c9 | BSD-0-Clause |
+| [github.com/exomind-tmi/mcp-plugin-kit/home](https://pkg.go.dev/github.com/exomind-tmi/mcp-plugin-kit@v0.1.0?tab=licenses) | v0.1.0 | BSD-0-Clause |
 | [github.com/google/jsonschema-go/jsonschema](https://pkg.go.dev/github.com/google/jsonschema-go@v0.4.3?tab=licenses) | v0.4.3 | MIT |
 | [github.com/modelcontextprotocol/go-sdk](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk@v1.8.0?tab=licenses) | v1.8.0 | Apache-2.0 AND MIT |
 | [github.com/segmentio/asm](https://pkg.go.dev/github.com/segmentio/asm@v1.1.3?tab=licenses) | v1.1.3 | MIT |
