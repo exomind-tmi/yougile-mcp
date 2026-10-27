@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "yougile": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/launch-yougile-mcp"
+    }
+  }
+}

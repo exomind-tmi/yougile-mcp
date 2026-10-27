@@ -1,0 +1,20 @@
+# Release on a v* tag: builds, publishes the GitHub Release and pins plugin/release.json.
+# The steps are in mcp-plugin-kit's go-release.yml.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: exomind-tmi/mcp-plugin-kit/.github/workflows/go-release.yml@main
+    permissions:
+      contents: write
