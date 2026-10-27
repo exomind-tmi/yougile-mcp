@@ -1,6 +1,6 @@
 {
   "name": "yougile",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "YouGile for Claude: read boards and tasks, create and update tasks, comments and attachments across several accounts.",
   "author": { "name": "Exomind Tmi", "url": "https://github.com/exomind-tmi" },
   "homepage": "https://github.com/exomind-tmi/yougile-mcp",

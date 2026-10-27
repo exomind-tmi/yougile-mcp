@@ -1,4 +1,13 @@
 {
-  "version": "v0.0.0",
-  "assets": {}
+  "version": "v0.1.0",
+  "assets": {
+    "windows-amd64": {
+      "url": "https://github.com/exomind-tmi/yougile-mcp/releases/download/v0.1.0/yougile-mcp_v0.1.0_windows_amd64.exe",
+      "sha256": "f370b48a9701ab7ac2b6f69d57b5e4408d48b7c59fe067e2bfe764374c8b4944"
+    },
+    "linux-amd64": {
+      "url": "https://github.com/exomind-tmi/yougile-mcp/releases/download/v0.1.0/yougile-mcp_v0.1.0_linux_amd64",
+      "sha256": "8a17a264480eec95e3d49972b0fe20f9dfc59339b4096aba984655bac88a0583"
+    }
+  }
 }
