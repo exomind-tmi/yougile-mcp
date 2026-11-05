@@ -11,8 +11,8 @@
 - Go 1.27, no CGO, no daemon: a stateless stdio server. Every other dependency needs a reason.
 - stdout is the MCP channel. Messages go to stderr; the API key and the password are never printed or logged,
   and never appear in an error shown to the model.
-- A tool that changes YouGile is registered with `annotations(false, true)` (destructive), so hosts ask before
-  the call. There is no write switch.
+- A tool that changes YouGile is registered with `annotations(false, true)` (destructive), a hint hosts may
+  use to ask before the call. There is no write switch.
 - The state folder is touched only through the kit's `home` package (`github.com/exomind-tmi/mcp-plugin-kit/home`).
 - Build, launchers, packaging and CI come from mcp-plugin-kit; do not copy them here. After changing the kit's
   templates, run its `scripts/render.sh` and commit `plugin/scripts/`; after changing `go.mod`, its `scripts/notices.sh`.

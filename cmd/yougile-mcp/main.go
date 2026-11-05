@@ -73,9 +73,17 @@ func dispatch(args []string, h home.Home, in io.Reader, out, errOut io.Writer) e
 	store := accounts.Store{Path: accounts.FileIn(h)}
 	switch {
 	case args[0] == "stdio" && len(args) == 1:
+		path := h.Log("yougile-mcp.log")
+		home.RotateLog(path)
+		log, file, err := home.OpenLog("yougile-mcp", path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
 		server := mcp.NewServer(&mcp.Implementation{Name: "yougile", Version: version},
 			&mcp.ServerOptions{Instructions: tools.Instructions()})
-		tools.Register(server, tools.Deps{Home: h, UploadDirs: filepath.SplitList(os.Getenv("YOUGILE_MCP_UPLOAD_DIRS"))})
+		tools.Register(server, tools.Deps{Home: h, Log: log, Host: os.Getenv("YOUGILE_HOST"),
+			UploadDirs: filepath.SplitList(os.Getenv("YOUGILE_MCP_UPLOAD_DIRS"))})
 		return server.Run(ctx, &mcp.StdioTransport{})
 	case args[0] == "add" && len(args) == 1:
 		host := os.Getenv("YOUGILE_HOST")

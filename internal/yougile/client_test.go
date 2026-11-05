@@ -3,6 +3,7 @@ package yougile
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -29,16 +30,36 @@ func TestPagedFollowsNextAndStopsAtTheLimit(t *testing.T) {
 	c := newClient(t, fake, fakeapi.Key)
 
 	type task struct{ ID string }
-	all, err := Paged[task](context.Background(), c, "/tasks", 10, nil)
+	all, err := Paged[task](context.Background(), c, "/task-list", 10, nil)
 	if err != nil || len(all) != 3 {
 		t.Fatalf("got %v %v", all, err)
 	}
-	if got := fake.Count("/tasks"); got != 3 {
+	if got := fake.Count("/task-list"); got != 3 {
 		t.Errorf("three pages of one task: %d requests", got)
 	}
-	two, _ := Paged[task](context.Background(), c, "/tasks", 2, nil)
+	two, _ := Paged[task](context.Background(), c, "/task-list", 2, nil)
 	if len(two) != 2 {
 		t.Errorf("limit 2 gave %d", len(two))
+	}
+}
+
+func TestEachStopsWhenVisitSaysSoAndReportsMore(t *testing.T) {
+	fake := fakeapi.New()
+	defer fake.Close()
+	old := pageSize
+	pageSize = 1
+	defer func() { pageSize = old }()
+	c := newClient(t, fake, fakeapi.Key)
+
+	type task struct{ ID string }
+	pages := 0
+	more, err := Each(context.Background(), c, "/task-list", 0, 10, nil, func([]task) bool { pages++; return pages < 2 })
+	if err != nil || !more || pages != 2 || fake.Count("/task-list") != 2 {
+		t.Fatalf("more=%v pages=%d requests=%d err=%v", more, pages, fake.Count("/task-list"), err)
+	}
+	more, _ = Each(context.Background(), c, "/task-list", 0, 10, nil, func([]task) bool { return true })
+	if more {
+		t.Error("the whole list was read, nothing more")
 	}
 }
 
@@ -70,7 +91,7 @@ func TestAWrongKeyTellsHowToGetANewOneAndNeverEchoesIt(t *testing.T) {
 	defer fake.Close()
 	err := newClient(t, fake, "wrong-key").Call(context.Background(), "GET", "/users", nil, nil, nil)
 	var api *APIError
-	if !errors.As(err, &api) || api.Status != 401 || !strings.Contains(err.Error(), "yougile-mcp add") || strings.Contains(err.Error(), "wrong-key") {
+	if !errors.As(err, &api) || api.Status != 401 || !strings.Contains(err.Error(), "add it again") || strings.Contains(err.Error(), "wrong-key") {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -107,6 +128,26 @@ func TestFetchStaysOnTheHostAndHonoursTheLimit(t *testing.T) {
 	}
 	if _, _, err := c.Fetch(context.Background(), "https://evil.example/x", 1000); err == nil {
 		t.Fatal("foreign host accepted")
+	}
+	if _, _, err := c.Fetch(context.Background(), "/user-data/away/x.png", 1000); err == nil || fake.Count("/away/x.png") != 1 {
+		t.Fatalf("a redirect off the site must fail at once: %v, %d requests", err, fake.Count("/away/x.png"))
+	}
+}
+
+func TestSameSite(t *testing.T) {
+	c, _ := New("https://ru.yougile.com", "k")
+	for link, want := range map[string]bool{
+		"https://ru.yougile.com/a":             true,
+		"https://user-data.yougile.com/a":      true,
+		"https://yougile.com/a":                true,
+		"http://user-data.yougile.com/a":       false,
+		"https://yougile.com.evil.example/a":   false,
+		"https://user-data.yougile.com:8443/a": false,
+	} {
+		u, _ := url.Parse(link)
+		if got := c.sameSite(u); got != want {
+			t.Errorf("%s: %v", link, got)
+		}
 	}
 }
 

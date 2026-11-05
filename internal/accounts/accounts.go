@@ -65,11 +65,25 @@ func (s Store) Save(accounts map[string]Account) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.Path + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
+	return home.WriteAtomic(s.Path, raw, 0o600)
+}
+
+// Lock keeps a second `add` or `remove` out while this one changes the file; call the returned
+// function when done.
+func (s Store) Lock() (func(), error) {
+	if err := home.EnsureDir(filepath.Dir(s.Path)); err != nil {
+		return nil, err
 	}
-	return os.Rename(tmp, s.Path)
+	lock := s.Path + ".lock"
+	f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil, fmt.Errorf("another `yougile-mcp add` or `remove` is running; if none is, delete %s", lock)
+	}
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	return func() { os.Remove(lock) }, nil
 }
 
 // Pick chooses the account a tool call is about: the named one, or the only one.
@@ -83,7 +97,7 @@ func Pick(accounts map[string]Account, alias string) (Account, error) {
 	}
 	switch len(accounts) {
 	case 0:
-		return Account{}, errors.New("no YouGile accounts: run `yougile-mcp add` (see the README)")
+		return Account{}, errors.New("no YouGile accounts: add one with manage_accounts action=add (or `yougile-mcp add` in a terminal)")
 	case 1:
 		for _, a := range accounts {
 			return a, nil
@@ -111,8 +125,18 @@ type Prompter interface {
 	Secret(prompt string) (string, error)
 }
 
-func defaultAlias(company string) string {
-	alias := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(company), "-"), "-")
+// DefaultAlias is the alias offered for a company: its name in lowercase latin letters (Cyrillic is
+// transliterated), digits and dashes.
+func DefaultAlias(company string) string {
+	var latin strings.Builder
+	for _, r := range strings.ToLower(company) {
+		if t, ok := cyrillic[r]; ok {
+			latin.WriteString(t)
+		} else {
+			latin.WriteRune(r)
+		}
+	}
+	alias := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(latin.String(), "-"), "-")
 	if len(alias) > 32 {
 		alias = strings.Trim(alias[:32], "-")
 	}
@@ -120,6 +144,49 @@ func defaultAlias(company string) string {
 		return "company"
 	}
 	return alias
+}
+
+var cyrillic = map[rune]string{
+	'а': "a", 'б': "b", 'в': "v", 'г': "g", 'д': "d", 'е': "e", 'ё': "e", 'ж': "zh", 'з': "z", 'и': "i",
+	'й': "y", 'к': "k", 'л': "l", 'м': "m", 'н': "n", 'о': "o", 'п': "p", 'р': "r", 'с': "s", 'т': "t",
+	'у': "u", 'ф': "f", 'х': "kh", 'ц': "ts", 'ч': "ch", 'ш': "sh", 'щ': "shch", 'ъ': "", 'ы': "y", 'ь': "",
+	'э': "e", 'ю': "yu", 'я': "ya",
+}
+
+// FreeAlias is alias, or alias-2, alias-3... when it is taken: two companies may give one name.
+func FreeAlias(saved map[string]Account, alias string) string {
+	free, base := alias, strings.TrimRight(alias[:min(len(alias), 28)], "-") // room for -NNN within 32
+	for n := 2; ; n++ {
+		if _, taken := saved[free]; !taken {
+			return free
+		}
+		free = fmt.Sprintf("%s-%d", base, n)
+	}
+}
+
+// SaveKey makes an API key for one company of a login and saves it under alias.
+func SaveKey(ctx context.Context, s Store, client *yougile.Client, host, login, password string, c yougile.Company, alias string) error {
+	if !aliasRE.MatchString(alias) {
+		return fmt.Errorf("bad alias %q: use 1-32 of a-z, 0-9, - and _", alias)
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	accounts, err := s.Load()
+	if err != nil {
+		return err
+	}
+	if _, taken := accounts[alias]; taken {
+		return fmt.Errorf("alias %q exists: remove it first", alias)
+	}
+	key, err := client.NewKey(ctx, login, password, c.ID)
+	if err != nil {
+		return err
+	}
+	accounts[alias] = Account{Alias: alias, CompanyID: c.ID, Company: c.Name, Host: host, Key: key}
+	return s.Save(accounts)
 }
 
 // Add logs in once, lists the companies of the login, and saves a key per chosen company.
@@ -150,12 +217,12 @@ func Add(ctx context.Context, s Store, host string, p Prompter, out io.Writer) e
 	if err != nil {
 		return err
 	}
-	accounts, err := s.Load()
-	if err != nil {
-		return err
-	}
 	for _, c := range chosen {
-		def := defaultAlias(c.Name)
+		saved, err := s.Load()
+		if err != nil {
+			return err
+		}
+		def := FreeAlias(saved, DefaultAlias(c.Name))
 		alias, err := p.Ask(fmt.Sprintf("Alias for %q [%s]: ", c.Name, def))
 		if err != nil {
 			return err
@@ -163,18 +230,7 @@ func Add(ctx context.Context, s Store, host string, p Prompter, out io.Writer) e
 		if alias = strings.TrimSpace(alias); alias == "" {
 			alias = def
 		}
-		if !aliasRE.MatchString(alias) {
-			return fmt.Errorf("bad alias %q: use 1-32 of a-z, 0-9, - and _", alias)
-		}
-		if _, taken := accounts[alias]; taken {
-			return fmt.Errorf("alias %q exists: remove it first", alias)
-		}
-		key, err := client.NewKey(ctx, login, password, c.ID)
-		if err != nil {
-			return err
-		}
-		accounts[alias] = Account{Alias: alias, CompanyID: c.ID, Company: c.Name, Host: host, Key: key}
-		if err := s.Save(accounts); err != nil {
+		if err := SaveKey(ctx, s, client, host, login, password, c, alias); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "saved %q (%s)\n", alias, c.Name)
@@ -218,6 +274,11 @@ func List(s Store, out io.Writer) error {
 
 // Remove forgets an account. Its key stays valid in YouGile until deleted there.
 func Remove(s Store, alias string, out io.Writer) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	accounts, err := s.Load()
 	if err != nil {
 		return err

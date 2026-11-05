@@ -3,9 +3,12 @@ package fakeapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,10 +20,23 @@ const Key = "test-key"
 type obj = map[string]any
 
 var tasks = []obj{
-	{"id": "t1", "idTaskProject": 7, "title": "Broken <b>login</b>", "columnId": "c1", "assigned": []string{"u1"},
-		"timestamp": 1760000000000, "description": `<p>Button &amp; form</p><p>fails</p><img src="/files/pic.png">`},
-	{"id": "t2", "idTaskProject": 8, "title": "Other", "columnId": "c1", "description": ""},
-	{"id": "t3", "idTaskProject": 9, "title": "In column two", "columnId": "c2", "description": ""},
+	{"id": "t1", "idTaskProject": "DEV-7", "idTaskCommon": "ID-107", "title": "Broken <b>login</b>", "columnId": "c1",
+		"assigned": []string{"u1"}, "timestamp": 1760000000000, "subtasks": []string{"t2"},
+		"description": `<p>Button &amp; form</p><p>fails</p><img src="/files/pic.png">`,
+		"stickers":    obj{"s1": "st1", "s2": "ORB-42 order", "s3": []string{"sp1"}},
+		"deadline":    obj{"deadline": 1760100000000, "startDate": 1760000000000, "withTime": true}},
+	{"id": "t2", "idTaskProject": "DEV-8", "idTaskCommon": "ID-108", "title": "Other login", "columnId": "c1", "description": "",
+		"stickers": obj{"s2": "ORB-43"}},
+	{"id": "t3", "idTaskProject": "DEV-9", "idTaskCommon": "ID-109", "title": "In column two", "columnId": "c2",
+		"description": "<p>" + strings.Repeat("long ", 100) + "</p>"},
+}
+
+var stickers = map[string][]obj{
+	"/string-stickers": {
+		{"id": "s1", "name": "Priority", "states": []obj{{"id": "st1", "name": "High"}, {"id": "st2", "name": "Low"}}},
+		{"id": "s2", "name": "Order"},
+	},
+	"/sprint-stickers": {{"id": "s3", "name": "Sprint", "states": []obj{{"id": "sp1", "name": "Sprint 1"}}}},
 }
 
 var messages = []obj{
@@ -28,6 +44,7 @@ var messages = []obj{
 	{"id": 1760000001000, "fromUserId": "u1", "text": "first\n/root/#file:/files/report.pdf",
 		"textHtml": `<p>first</p><p><a href="/files/report.pdf">report</a></p>`},
 	{"id": 1760000003000, "fromUserId": "u1", "text": "gone", "deleted": true},
+	{"id": 1760000004000, "fromUserId": "me", "text": "mine", "textHtml": "<p>mine</p>"},
 }
 
 type file struct {
@@ -36,9 +53,10 @@ type file struct {
 }
 
 var files = map[string]file{
-	"/files/pic.png":    {[]byte("\x89PNG-data"), "image/png"},
-	"/files/report.pdf": {[]byte("%PDF-1.4 data"), "application/pdf"},
-	"/files/big.bin":    {make([]byte, 2000), "application/octet-stream"},
+	"/files/pic.png":       {[]byte("\x89PNG-data"), "image/png"},
+	"/files/report.pdf":    {[]byte("%PDF-1.4 data"), "application/pdf"},
+	"/files/big.bin":       {make([]byte, 2000), "application/octet-stream"},
+	"/files/Build log.txt": {[]byte("log"), "text/plain"},
 }
 
 // Request is one recorded call.
@@ -54,6 +72,7 @@ type Server struct {
 	requests []Request
 	failures map[string][]int
 	redirect string
+	extra    []obj
 }
 
 // New starts a fake API; call Close when done.
@@ -68,6 +87,15 @@ func (s *Server) Fail(route string, statuses ...int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.failures[route] = statuses
+}
+
+// ManyTasks adds n tasks with the given description to a column, for size limits.
+func (s *Server) ManyTasks(column string, n int, description string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range n {
+		s.extra = append(s.extra, obj{"id": fmt.Sprintf("m%d", i), "title": "Many", "columnId": column, "description": description})
+	}
 }
 
 // RedirectUsers makes /users answer with a redirect.
@@ -134,6 +162,22 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, obj{"content": []obj{{"id": "co1", "name": "Acme"}, {"id": "co2", "name": "Beta Corp"}}})
 	case route == "/auth/keys":
 		reply(w, 200, obj{"key": "issued-key"})
+	case strings.HasPrefix(r.URL.Path, "/user-data/away/"):
+		// like YouGile, a file link redirects; this one leaves the site
+		w.Header().Set("Location", "https://elsewhere.example/x.png")
+		w.WriteHeader(http.StatusFound)
+	case strings.HasPrefix(r.URL.Path, "/user-data/"):
+		w.Header().Set("Location", "/files/"+strings.TrimPrefix(r.URL.Path, "/user-data/"))
+		w.WriteHeader(http.StatusFound)
+	case strings.HasPrefix(r.URL.Path, "/files/"):
+		// files are served without the key, as user-data.yougile.com does
+		f, ok := files[r.URL.Path]
+		if !ok {
+			reply(w, 404, obj{"error": "no file"})
+			return
+		}
+		w.Header().Set("Content-Type", f.mime)
+		w.Write(f.data)
 	case r.Header.Get("Authorization") != "Bearer "+Key:
 		reply(w, 401, obj{"error": "Unauthorized"})
 	default:
@@ -141,34 +185,66 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// page answers one page of items as a list endpoint does.
+func page(w http.ResponseWriter, q url.Values, items []obj) {
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit == 0 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	end := min(len(items), offset+limit)
+	reply(w, 200, obj{"content": items[min(offset, end):end], "paging": obj{"next": end < len(items)}})
+}
+
+func matches(t obj, q url.Values) bool {
+	if col := q.Get("columnId"); col != "" && col != t["columnId"] {
+		return false
+	}
+	if title := q.Get("title"); title != "" && !strings.Contains(strings.ToLower(t["title"].(string)), strings.ToLower(title)) {
+		return false
+	}
+	if who := q.Get("assignedTo"); who != "" {
+		assigned, _ := t["assigned"].([]string)
+		if !slices.Contains(assigned, who) {
+			return false
+		}
+	}
+	if id := q.Get("stickerId"); id != "" {
+		set, _ := t["stickers"].(obj)
+		value, ok := set[id]
+		if !ok || (q.Get("stickerStateId") != "" && value != q.Get("stickerStateId")) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) route(w http.ResponseWriter, r *http.Request, route string, body []byte) {
 	q := r.URL.Query()
 	switch {
+	case route == "/users/me":
+		reply(w, 200, obj{"id": "me", "realName": "Me", "email": "me@example.com"})
 	case route == "/users":
-		reply(w, 200, obj{"content": []obj{{"id": "u1", "realName": "Ann", "email": "ann@example.com"}}, "paging": obj{"next": false}})
+		page(w, q, []obj{{"id": "u1", "realName": "Ann", "email": "ann@example.com"}, {"id": "me", "realName": "Me", "email": "me@example.com"}})
+	case route == "/projects":
+		page(w, q, []obj{{"id": "p1", "title": "Project"}})
+	case route == "/string-stickers" || route == "/sprint-stickers":
+		page(w, q, stickers[route])
 	case route == "/boards":
 		reply(w, 200, obj{"content": []obj{{"id": "b1", "title": "Board", "projectId": "p1"}}, "paging": obj{"next": false}})
 	case route == "/columns":
 		reply(w, 200, obj{"content": []obj{{"id": "c1", "title": "New"}, {"id": "c2", "title": "Done"}}, "paging": obj{"next": false}})
-	case strings.HasPrefix(route, "/files/"):
-		f, ok := files[route]
-		if !ok {
-			reply(w, 404, obj{"error": "no file"})
-			return
-		}
-		w.Header().Set("Content-Type", f.mime)
-		w.Write(f.data)
-	case route == "/tasks" && r.Method == http.MethodGet:
+	case route == "/task-list":
 		var items []obj
-		for _, t := range tasks {
-			if col := q.Get("columnId"); col == "" || col == t["columnId"] {
+		s.mu.Lock()
+		all := append(slices.Clone(tasks), s.extra...)
+		s.mu.Unlock()
+		for _, t := range all {
+			if matches(t, q) {
 				items = append(items, t)
 			}
 		}
-		limit, _ := strconv.Atoi(q.Get("limit"))
-		offset, _ := strconv.Atoi(q.Get("offset"))
-		end := min(len(items), offset+limit)
-		reply(w, 200, obj{"content": items[min(offset, end):end], "paging": obj{"next": end < len(items)}})
+		page(w, q, items)
 	case strings.HasPrefix(route, "/tasks/") && r.Method == http.MethodGet:
 		for _, t := range tasks {
 			if t["id"] == strings.TrimPrefix(route, "/tasks/") {
@@ -178,7 +254,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request, route string, bod
 		}
 		reply(w, 404, obj{"error": "no task"})
 	case strings.HasPrefix(route, "/chats/") && strings.HasSuffix(route, "/messages") && r.Method == http.MethodGet:
-		reply(w, 200, obj{"content": messages})
+		page(w, q, messages)
+	case strings.HasPrefix(route, "/chats/") && strings.Contains(route, "/messages/") && r.Method == http.MethodGet:
+		for _, m := range messages {
+			if strings.HasSuffix(route, "/"+strconv.FormatInt(int64(m["id"].(int)), 10)) {
+				reply(w, 200, m)
+				return
+			}
+		}
+		reply(w, 404, obj{"error": "no message"})
 	case route == "/upload-file":
 		reply(w, 200, obj{"url": "/files/pic.png"})
 	default:

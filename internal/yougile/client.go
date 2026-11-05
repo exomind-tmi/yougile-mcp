@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
@@ -23,6 +24,9 @@ const (
 	DefaultHost = "https://yougile.com"
 	retries     = 3
 )
+
+// errOffSite stops a download whose redirect leaves the account's site; it is not retried.
+var errOffSite = errors.New("a file link led off the account's YouGile site")
 
 // pageSize is how many items one list request asks for.
 var pageSize = 1000
@@ -81,6 +85,9 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body []byte, con
 			if ctx.Err() != nil {
 				return nil, nil, ctx.Err()
 			}
+			if errors.Is(err, errOffSite) {
+				return nil, nil, errOffSite
+			}
 			last = fmt.Errorf("YouGile is unreachable: %v", err)
 			c.Sleep(backoff(attempt, ""))
 			continue
@@ -125,7 +132,7 @@ func backoff(attempt int, retryAfter string) time.Duration {
 
 func describe(status int, body []byte) *APIError {
 	hints := map[int]string{
-		401: " (the key is invalid or expired: remove the account and add it again with `yougile-mcp add`)",
+		401: " (the key is invalid or expired: remove the account and add it again with manage_accounts)",
 		403: " (the key's user has no access to this object)",
 		404: " (not found)", 429: " (rate limited)",
 	}
@@ -171,14 +178,25 @@ func ifNotEmpty(ok bool, s string) string {
 
 // Paged reads up to limit items of a list endpoint, following offset paging.
 func Paged[T any](ctx context.Context, c *Client, path string, limit int, query url.Values) ([]T, error) {
-	var items []T
-	for len(items) < limit {
+	items := []T{}
+	_, err := Each(ctx, c, path, 0, limit, query, func(page []T) bool {
+		items = append(items, page...)
+		return true
+	})
+	return items, err
+}
+
+// Each hands the pages of a list endpoint, from item number from on, to visit until limit items were read,
+// the list ends or visit returns false. It reports whether the list may hold more items.
+func Each[T any](ctx context.Context, c *Client, path string, from, limit int, query url.Values, visit func([]T) bool) (bool, error) {
+	read := 0
+	for read < limit {
 		q := url.Values{}
 		for k, v := range query {
 			q[k] = v
 		}
-		q.Set("limit", strconv.Itoa(min(pageSize, limit-len(items))))
-		q.Set("offset", strconv.Itoa(len(items)))
+		q.Set("limit", strconv.Itoa(min(pageSize, limit-read)))
+		q.Set("offset", strconv.Itoa(from+read))
 		var page struct {
 			Content []T `json:"content"`
 			Paging  struct {
@@ -186,14 +204,18 @@ func Paged[T any](ctx context.Context, c *Client, path string, limit int, query 
 			} `json:"paging"`
 		}
 		if err := c.Call(ctx, http.MethodGet, path, q, nil, &page); err != nil {
-			return nil, err
+			return false, err
 		}
-		items = append(items, page.Content...)
+		read += len(page.Content)
 		if len(page.Content) == 0 || !page.Paging.Next {
-			break
+			visit(page.Content)
+			return false, nil
+		}
+		if !visit(page.Content) {
+			return true, nil
 		}
 	}
-	return items, nil
+	return true, nil
 }
 
 // Upload stores a file and returns its absolute address.
@@ -222,6 +244,14 @@ func (c *Client) Upload(ctx context.Context, name, mime string, data []byte) (st
 	return c.Absolute(out.URL), nil
 }
 
+// Path turns a full address on the host into a path, the reverse of Absolute.
+func (c *Client) Path(address string) string {
+	if rest, ok := strings.CutPrefix(address, c.origin); ok && strings.HasPrefix(rest, "/") {
+		return rest
+	}
+	return address
+}
+
 // Absolute turns a path on the host into a full address.
 func (c *Client) Absolute(ref string) string {
 	if strings.HasPrefix(ref, "/") {
@@ -230,18 +260,47 @@ func (c *Client) Absolute(ref string) string {
 	return ref
 }
 
-// Fetch downloads a file from the client's own host (the key goes nowhere else) and returns it
-// with its content type. Files over limit bytes are refused.
+// Fetch downloads a file attached in YouGile and returns it with its content type. Files are served
+// without the key (yougile.com/user-data/... redirects to user-data.yougile.com), so none is sent;
+// the link and every redirect must stay on the account's site. Files over limit bytes are refused.
 func (c *Client) Fetch(ctx context.Context, ref string, limit int64) ([]byte, string, error) {
-	u := c.Absolute(ref)
-	if !strings.HasPrefix(u, c.origin+"/") {
-		return nil, "", errors.New("only files on the account's YouGile host can be downloaded")
+	u, err := url.Parse(c.Absolute(ref))
+	if err != nil || !c.sameSite(u) {
+		return nil, "", errors.New("only files on the account's YouGile site can be downloaded")
 	}
-	data, header, err := c.do(ctx, http.MethodGet, u, nil, "", limit)
+	anon := *c
+	anon.key = ""
+	anon.http = &http.Client{Timeout: c.http.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) > 5 || !c.sameSite(req.URL) {
+			return errOffSite
+		}
+		return nil
+	}}
+	data, header, err := anon.do(ctx, http.MethodGet, u.String(), nil, "", limit)
 	if err != nil {
 		return nil, "", err
 	}
 	return data, header.Get("Content-Type"), nil
+}
+
+// sameSite reports whether u is on the account's host or another host of its domain (user-data.yougile.com
+// for yougile.com or ru.yougile.com), with the account's scheme.
+func (c *Client) sameSite(u *url.URL) bool {
+	own, _ := url.Parse(c.origin)
+	if u.Scheme != own.Scheme {
+		return false
+	}
+	if u.Host == own.Host {
+		return true
+	}
+	domain := func(host string) string {
+		labels := strings.Split(host, ".")
+		if len(labels) < 2 || net.ParseIP(host) != nil {
+			return host
+		}
+		return strings.Join(labels[len(labels)-2:], ".")
+	}
+	return u.Port() == "" && own.Port() == "" && domain(u.Hostname()) == domain(own.Hostname())
 }
 
 // Company is one company a login belongs to.

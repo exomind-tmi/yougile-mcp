@@ -3,6 +3,7 @@ package accounts
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -118,5 +119,72 @@ func TestPickExplainsEveryCase(t *testing.T) {
 func TestMissingFileIsNoAccounts(t *testing.T) {
 	if got, err := (Store{Path: filepath.Join(t.TempDir(), "none.json")}).Load(); err != nil || len(got) != 0 {
 		t.Fatalf("%v %v", got, err)
+	}
+}
+
+func TestLockKeepsASecondChangeOut(t *testing.T) {
+	fake := fakeapi.New()
+	defer fake.Close()
+	store := Store{Path: filepath.Join(t.TempDir(), "state", "accounts.json")}
+	unlock, err := store.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Lock(); err == nil || !strings.Contains(err.Error(), "is running") {
+		t.Fatalf("second lock: %v", err)
+	}
+	if err := Remove(store, "x", io.Discard); err == nil || !strings.Contains(err.Error(), "is running") {
+		t.Fatalf("remove while locked: %v", err)
+	}
+	unlock()
+	// a failed add lets go of the lock too
+	p := &script{answers: []string{"me", "0", "Bad Alias!"}, secret: "pw"}
+	if err := Add(context.Background(), store, fake.URL, p, io.Discard); err == nil {
+		t.Fatal("a bad alias must fail")
+	}
+	again, err := store.Lock()
+	if err != nil {
+		t.Fatalf("after unlock: %v", err)
+	}
+	again()
+}
+
+func TestDefaultAliasTransliteratesCyrillic(t *testing.T) {
+	for name, want := range map[string]string{
+		"ООО «Ромашка»": "ooo-romashka",
+		"Beta Corp":     "beta-corp",
+		"Щёлково 2":     "shchelkovo-2",
+		"«»":            "company",
+	} {
+		if got := DefaultAlias(name); got != want {
+			t.Errorf("%s: %s", name, got)
+		}
+	}
+}
+
+func TestFreeAliasNumbersATakenOne(t *testing.T) {
+	saved := map[string]Account{"company": {}, "company-2": {}}
+	if got := FreeAlias(saved, "company"); got != "company-3" {
+		t.Errorf("got %s", got)
+	}
+	long := strings.Repeat("a", 32)
+	if got := FreeAlias(map[string]Account{long: {}}, long); got != strings.Repeat("a", 28)+"-2" {
+		t.Errorf("long: %s", got)
+	}
+}
+
+func TestAddOffersAFreeAliasWhenTheNameIsTaken(t *testing.T) {
+	fake := fakeapi.New()
+	defer fake.Close()
+	store := Store{Path: filepath.Join(t.TempDir(), "accounts.json")}
+	if err := store.Save(map[string]Account{"acme": {CompanyID: "other", Company: "Acme Old", Host: fake.URL, Key: "k"}}); err != nil {
+		t.Fatal(err)
+	}
+	p := &script{answers: []string{"me", "0", ""}, secret: "x"}
+	if err := Add(context.Background(), store, fake.URL, p, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := store.Load(); saved["acme-2"].CompanyID != "co1" || saved["acme"].CompanyID != "other" {
+		t.Errorf("saved: %+v", saved)
 	}
 }
