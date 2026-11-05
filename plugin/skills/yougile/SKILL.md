@@ -33,6 +33,8 @@ description: How to work with YouGile through the yougile tools - finding a task
 
 ## Reading a card
 
+- Tasks come with `link`, the address that opens the card in YouGile: give it to the user when you
+  name a task. `create_task` returns it too.
 - `get_task` gives the full description, stickers by name, the deadline, subtasks (ids, open them
   with `get_task`) and the files of the description.
 - `get_messages` gives one page of the chat, oldest first; the following pages are newer. When `next` is

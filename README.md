@@ -153,7 +153,8 @@ Against the live service (yougile.com, 02.11.2026), through the server binary ov
 - Reading: projects (also by title), boards, columns, users (also by project), stickers, tasks of a column,
   one task, task codes, stickers by name, assignees, a chat in pages (YouGile serves the oldest first; the
   next page holds newer messages), the `text` filter of a chat, downloads of images and files from
-  descriptions and chats.
+  descriptions and chats, `link` of a task (`find_tasks` by code, on 05.11.2026; the app opens the card by
+  the code alone).
 - `find_tasks`: by title (a case-insensitive part of it, searched by YouGile), by `code` and by
   `commonCode`, by sticker state and by sticker value, within a board.
 - Writing, on a test board: create a task with a sticker; change title, column, assignees (`[]` clears
@@ -163,8 +164,8 @@ Against the live service (yougile.com, 02.11.2026), through the server binary ov
 - Adding an account with the form in interactive Claude Code over SSH; the Desktop Code tab declines it.
 
 Only against the fake: `delete_message` refusing a message of someone else, the deadline (the tasks
-checked had none), sprint stickers and free text stickers (the test company has none), `ru.yougile.com`,
-rate limits.
+checked had none), the `link` of `create_task`, sprint stickers and free text stickers (the test company
+has none), `ru.yougile.com`, rate limits.
 
 ## Known limits
 
@@ -172,7 +173,8 @@ rate limits.
   match) and matches the code here; `stickerValue` works the same way. YouGile lists tasks oldest first, so
   a recent task is found last; narrow such a search with `boardId` or `columnId`. The answer says so when
   it stopped at the cap.
-- The API gives no company code, so the server does not build links to cards.
+- Links to cards (`link` in task answers) are built, not given by the API: `/team/<the last group of the
+  company id>/#<task code>`, the address the app opens a card by. A task without a code has no link.
 - Rate limits were never hit; the client retries 429 and 5xx with backoff.
 - The first page of a long chat holds its oldest messages; the newest come last.
 

@@ -61,6 +61,7 @@ type server struct {
 
 type session struct {
 	client     *yougile.Client
+	team       string // the company in app links, see teamOf
 	users      cached[map[string]string]
 	self       cached[string]
 	stickerSet cached[map[string]apiSticker]
@@ -129,7 +130,7 @@ func (t *server) session(alias string) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &session{client: client}
+	s := &session{client: client, team: teamOf(a.CompanyID)}
 	t.sessions[id] = s
 	return s, nil
 }
@@ -255,6 +256,7 @@ type taskView struct {
 	ID          string         `json:"id"`
 	Code        string         `json:"code,omitempty"`
 	CommonCode  string         `json:"commonCode,omitempty"`
+	Link        string         `json:"link,omitempty"`
 	Title       string         `json:"title"`
 	ColumnID    string         `json:"columnId"`
 	Completed   bool           `json:"completed"`
@@ -272,7 +274,7 @@ type taskView struct {
 // view shapes a task for the model. Names of people and stickers are a convenience: when they cannot be
 // read (no access to a list, say), the ids are shown instead of failing the whole answer.
 func (s *session) view(tk apiTask, lk lookups, full bool) taskView {
-	v := taskView{ID: tk.ID, Code: tk.Code, CommonCode: tk.CommonCode, Title: tk.Title, ColumnID: tk.ColumnID,
+	v := taskView{ID: tk.ID, Code: tk.Code, CommonCode: tk.CommonCode, Link: s.link(tk.Code), Title: tk.Title, ColumnID: tk.ColumnID,
 		Completed: tk.Completed, Archived: tk.Archived, Assigned: []person{}, Created: iso(tk.Timestamp),
 		Stickers: stickerValues(tk.Stickers, lk.stickers)}
 	if d := tk.Deadline; d != nil {
@@ -287,6 +289,23 @@ func (s *session) view(tk apiTask, lk lookups, full bool) taskView {
 		v.Description = plain(tk.Description, descriptionLimit)
 	}
 	return v
+}
+
+// teamOf is the code of a company in the links of the YouGile app (/team/<code>/): the last group of its id.
+func teamOf(companyID string) string {
+	groups := strings.Split(companyID, "-")
+	if last := groups[len(groups)-1]; len(groups) == 5 && len(last) == 12 {
+		return last
+	}
+	return ""
+}
+
+// link is the address that opens a task in the YouGile app, which finds the task by its code alone.
+func (s *session) link(code string) string {
+	if s.team == "" || code == "" {
+		return ""
+	}
+	return s.client.Absolute("/team/" + s.team + "/#" + code)
 }
 
 // lookups are the names of people and stickers a set of tasks is shown with.
@@ -510,6 +529,15 @@ func (t *server) createTask(ctx context.Context, _ *mcp.CallToolRequest, in crea
 	var created map[string]any
 	if err := s.client.Call(ctx, "POST", "/tasks", nil, body, &created); err != nil {
 		return nil, nil, err
+	}
+	// YouGile answers the id only; the link needs the code of the task
+	if id, ok := created["id"].(string); ok && s.team != "" {
+		var tk apiTask
+		if err := s.client.Call(ctx, "GET", "/tasks/"+url.PathEscape(id), nil, nil, &tk); err != nil {
+			t.deps.Log.Warn("no link for the new task", "error", err)
+		} else if link := s.link(tk.Code); link != "" {
+			created["link"] = link
+		}
 	}
 	return text(created)
 }

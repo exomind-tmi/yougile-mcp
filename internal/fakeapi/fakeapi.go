@@ -263,6 +263,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request, route string, bod
 			}
 		}
 		reply(w, 404, obj{"error": "no message"})
+	case route == "/tasks" && r.Method == http.MethodPost:
+		reply(w, 201, obj{"id": "t1"})
 	case route == "/upload-file":
 		reply(w, 200, obj{"url": "/files/pic.png"})
 	default:

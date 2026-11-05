@@ -908,3 +908,46 @@ func TestNamesAreAskedForOncePerAnswerEvenWhenTheyFail(t *testing.T) {
 		t.Errorf("users asked %d times for one answer", got)
 	}
 }
+
+func TestTasksCarryALinkToTheCardByItsCode(t *testing.T) {
+	e := setup(t, nil)
+	var task map[string]any
+	e.ok("get_task", map[string]any{"taskId": "t1"}, &task)
+	if _, ok := task["link"]; ok {
+		t.Errorf("a company id that is not a UUID gives no link: %v", task["link"])
+	}
+
+	e = setup(t, nil)
+	all, err := e.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := all["main"]
+	a.CompanyID = "f7724cf3-4b20-4e41-810d-fd32c62c17ba"
+	all["main"] = a
+	if err := e.store.Save(all); err != nil {
+		t.Fatal(err)
+	}
+	want := e.fake.URL + "/team/fd32c62c17ba/#DEV-7"
+	e.ok("get_task", map[string]any{"taskId": "t1"}, &task)
+	if task["link"] != want {
+		t.Errorf("get_task link: %v", task["link"])
+	}
+	var page struct{ Tasks []struct{ Code, Link string } }
+	e.ok("list_tasks", map[string]any{"columnId": "c1"}, &page)
+	if len(page.Tasks) == 0 || page.Tasks[0].Link != e.fake.URL+"/team/fd32c62c17ba/#"+page.Tasks[0].Code {
+		t.Errorf("list_tasks: %+v", page.Tasks)
+	}
+	var created map[string]any
+	e.ok("create_task", map[string]any{"title": "T", "columnId": "c1"}, &created)
+	if created["id"] != "t1" || created["link"] != want {
+		t.Errorf("create_task: %v", created)
+	}
+	// the task is made even when it cannot be read back: no link, and no error that would make a second one
+	e.fake.Fail("/tasks/t1", 404)
+	created = nil
+	e.ok("create_task", map[string]any{"title": "T", "columnId": "c1"}, &created)
+	if _, ok := created["link"]; created["id"] != "t1" || ok {
+		t.Errorf("create_task without a read: %v", created)
+	}
+}
